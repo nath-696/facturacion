@@ -1,0 +1,19 @@
+# Control de la imagen: excluye lo que no debe entrar en el build.
+.git
+.gitignore
+
+# Configuración privada: llega por compose (env_file), nunca embebida.
+.env
+.env.*
+
+# Artefactos generados y basura del sistema.
+tmp
+output
+backups
+*.log
+*.tmp
+*.bak
+.idea
+.vscode
+Thumbs.db
+.DS_Store
