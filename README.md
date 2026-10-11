@@ -1,124 +1,131 @@
-# Facturación: despliegue con Docker
+# Facturación
 
-Aplicación PHP 8.3 con Apache, MySQL 8.4 y Docker Compose v2. El mismo
-servidor sirve la interfaz y la API; no se necesita XAMPP ni compilar JavaScript.
+Proyecto académico de facturación con PHP 8.3, MySQL 8.4 y una interfaz en
+HTML, CSS y JavaScript. Se instala con **Docker Compose**; no necesita XAMPP,
+Node.js, Composer ni importar archivos SQL manualmente en el servidor.
 
-## Primer arranque
+## Funciones
 
-Desde la carpeta del proyecto, en un servidor Linux con Docker y Compose:
+- Facturas de consumidor final y crédito fiscal, con descarga en PDF y envío por correo.
+- Registro y edición de clientes. Las facturas anteriores conservan los datos del cliente
+  que tenían al emitirse. El crédito fiscal requiere NIT y NRC.
+- Catálogos de productos y sucursales administrados desde el panel.
+- Administración de usuarios, bloqueo de cuentas y horarios por días, horas y fechas.
+- Historial de facturas: cada empleado consulta sus ventas; el administrador consulta todas.
+- Registro de accesos rechazados, alertas por correo y reintentos de envío desde administración.
 
-```sh
-cp .env.example .env
-chmod 600 .env
-```
+Los empleados pueden consultar su horario autorizado en el inicio. Los horarios usan
+la zona `America/El_Salvador`; la hora de salida no está incluida y los turnos nocturnos
+pertenecen al día en que comenzaron. Un administrador activo tiene acceso las 24 horas.
 
-Edite `.env` y complete `FACTURACION_DB_PASS` y `MYSQL_ROOT_PASSWORD` con
-contraseñas largas y distintas. Compose rechaza contraseñas vacías. No use
-`root` como `FACTURACION_DB_USER`. Puede generar cada contraseña con
-`openssl rand -hex 32`. No suba `.env` al repositorio.
+## Cálculos de facturación
 
-```sh
-docker compose config --quiet
-docker compose up -d --build --wait
-docker compose ps
-```
+Los precios del catálogo **ya incluyen IVA del 13%**. El sistema suma los importes
+de las líneas, obtiene la base sin IVA dividiendo el total entre `1.13` y calcula
+el IVA por diferencia. Las cantidades admitidas son enteras, de 1 a 9999 por línea.
+El servidor valida los productos y recalcula los importes con los precios del catálogo.
 
-En Windows, copie el archivo con `Copy-Item .env.example .env`.
+La comisión del vendedor se calcula sobre la base sin IVA y no aumenta el total del cliente:
 
-La aplicación queda en `http://127.0.0.1:8080/`. Para entrar directamente
-desde otro equipo, configure `APP_BIND_IP=0.0.0.0` y permita `APP_PORT` en
-el firewall. Evite los puertos 5500 y 5501, que la interfaz reserva para Live Server.
-MySQL permanece dentro de la red de Compose, sin publicar el puerto 3306.
+| Base sin IVA | Comisión |
+| --- | --- |
+| Hasta $100.00 | 1% |
+| Más de $100.00 y hasta $1,000.00 | 2% |
+| Más de $1,000.00 y hasta $2,000.00 | 3% |
+| Más de $2,000.00 | 4% |
 
-Al iniciar un volumen vacío se crea el esquema completo a partir de
-`database/schema.sql`, incluidas sus migraciones. Se omiten todos los datos
-de demostración y las cuentas con contraseña `password`. No ejecute de nuevo
-`schema.sql` sobre datos existentes: contiene instrucciones que eliminan tablas.
+Por ejemplo, una venta de **$113.00** tiene una base de **$100.00**, IVA de **$13.00**
+y comisión de **$1.00**. Los importes se redondean a dos decimales.
 
-## Crear el administrador
+## Instalar en un servidor nuevo
 
-```sh
-docker compose exec app php database/crear-admin.php supremo "Administrador" 1990-01-01
-```
+Requisitos: servidor con Docker y el comando `docker compose` disponibles.
+Clona el repositorio desde GitHub en el servidor y entra en la carpeta del proyecto.
 
-Guarde la contraseña aleatoria que muestra la consola. El administrador puede
-entrar de lunes a sábado, entre las 08:00 y las 18:00, según la zona
-`America/El_Salvador` que usa el proyecto. Dentro del panel registre empleados,
-sucursales, productos y clientes. El comando de creación se ejecuta una sola
-vez por usuario; repetirlo con el mismo nombre falla por usuario duplicado.
+1. Copia la configuración:
+
+   ```sh
+   cp .env.example .env
+   chmod 600 .env
+   ```
+
+   En Windows con PowerShell, usa `Copy-Item .env.example .env`.
+
+2. Edita `.env`. Completa `FACTURACION_DB_PASS` y `MYSQL_ROOT_PASSWORD`
+   con contraseñas distintas. Deja las opciones de correo vacías si aún no las usarás.
+
+3. Inicia el sistema y crea tu administrador:
+
+   ```sh
+   docker compose up -d --build --wait
+   docker compose exec app php database/crear-admin.php admin "Administrador" 1990-01-01
+   ```
+
+Abre **http://IP-DEL-SERVIDOR:8080**. Permite el puerto 8080 en el firewall de tu
+servidor. Para probar en tu propia computadora usa http://localhost:8080.
+Puedes cambiar el puerto mediante `APP_PORT` en `.env`.
+
+Entra con **admin / admin123**. El administrador tiene acceso permanente.
+Puedes indicar otra contraseña como cuarto argumento del comando de creación.
+Las contraseñas de usuarios se guardan como texto, según la versión académica solicitada.
+
+Registra una sucursal, productos y clientes desde el panel para comenzar a facturar.
+La instalación arranca vacía: no agrega empleados ni ventas de demostración.
 
 ## Dominio y HTTPS
 
-Para producción, coloque un proxy con certificado HTTPS delante de Apache.
-Si el proxy corre en el mismo servidor, conserve `APP_BIND_IP=127.0.0.1` y
-redirija el dominio a `http://127.0.0.1:8080`. Si el proxy está en otro
-contenedor, use una red compartida y el destino `app:80`, ajustando su Compose.
-Sirva la aplicación en la raíz del dominio y preserve la cabecera `Host`.
+En el proxy de tu servidor, apunta el dominio a `http://127.0.0.1:8080` y activa
+su certificado HTTPS. En `.env`, cambia `APP_BIND_IP=127.0.0.1` y
+`FACTURACION_COOKIE_SECURE=1`. Aplica con `docker compose up -d`.
+Si el proxy está en otro contenedor, usa una red compartida y el destino `app:80`.
 
-Configure `FACTURACION_COOKIE_SECURE=1` en `.env` cuando acceda por HTTPS y
-aplique el cambio con `docker compose up -d`. Así las cookies de sesión se
-marcan como seguras incluso cuando el proxy termina TLS. Con este valor, el
-inicio de sesión requiere acceder mediante HTTPS. La configuración entregada
-usa HTTP local para permitir la comprobación inicial; no incluye certificados.
+## Correo (opcional)
 
-## Correo
+Configura en `.env` el host, puerto, usuario, clave y remitente SMTP.
+Usa `ssl` para el puerto 465 o `tls` para el 587, según tu proveedor.
+Ejecuta `docker compose up -d`; luego entra en **Administración → Correo de alertas**,
+guarda el destinatario y prueba el envío. Sin SMTP, las facturas se guardan y los
+correos quedan pendientes. La biblioteca de correo ya viene incluida en `vendor/`.
+Después de configurar SMTP, puedes reintentar los correos pendientes desde administración.
 
-Complete las variables SMTP de `.env` si necesita enviar facturas y alertas.
-Después de cambiarlas, ejecute `docker compose up -d`. En el panel del
-administrador configure el destinatario y pruebe el envío. Consulte
-[CORREO.md](CORREO.md) para los detalles. Las credenciales se pasan al
-contenedor en tiempo de ejecución y no se incorporan a la imagen.
-
-## Operación y actualización
+## Comandos útiles
 
 ```sh
-docker compose logs --tail=100 app db
-curl --fail http://127.0.0.1:8080/api/health.php
-docker compose up -d --build --wait
-docker compose down
+docker compose ps                         # Ver estado
+docker compose logs --tail=50 app db      # Ver errores
+docker compose up -d --build --wait       # Aplicar cambios de código
+docker compose down                      # Detener, conservando datos
 ```
 
-El endpoint de salud comprueba Apache, PHP y acceso al esquema de MySQL;
-responde 200 con `{"status":"ok"}` o 503 sin exponer credenciales. Ambos
-servicios reinician automáticamente salvo que los detenga explícitamente.
-Los registros rotan para limitar el espacio ocupado. Las sesiones y MySQL
-se conservan en volúmenes; reconstruir la imagen no borra la información.
-Evite `docker compose down -v`: elimina esos volúmenes y todos sus datos.
+Los datos se guardan en volúmenes. **No uses `docker compose down -v`** si quieres
+conservarlos. Cambiar contraseñas de MySQL en `.env` no cambia las de una base
+ya inicializada. La configuración privada `.env` no se incluye en Git.
 
-El esquema se importa **solo en el primer arranque con el volumen vacío**.
-Las actualizaciones de código no aplican migraciones a una base existente;
-revise y aplique únicamente las migraciones que le falten, después de un
-respaldo. Cambiar el nombre de la base, el usuario o sus contraseñas en `.env`
-no modifica los usuarios de un volumen ya inicializado: requiere cambios SQL
-coordinados antes de recrear la aplicación.
+## Si ya tienes una base anterior
 
-## Respaldo y restauración (servidor Linux)
+Conserva un respaldo. No importes `database/schema.sql`: es solo para una base vacía.
+Las actualizaciones anteriores están descritas en la [guía de migraciones](database/migraciones/README.md).
+Docker no ejecuta esas migraciones sobre tus datos existentes.
 
-Crear un respaldo consistente de las tablas InnoDB:
+## Organización
+
+- `api/`: permisos, horarios, facturas, cálculos y correo, separados por responsabilidad.
+- `assets/` e `index.html`: interfaz y clases de cálculo para la materia.
+- `config/`: lectura de las variables de entorno que Docker recibe de `.env`.
+- `database/`: esquema limpio y comando para crear el administrador.
+- `docker/`, `Dockerfile` y `compose.yaml`: ejecución en el servidor.
+
+## Pruebas de desarrollo
+
+Las pruebas se conservan en `tests/` y no se incluyen en la imagen de la aplicación.
+Para ejecutar las pruebas de lógica y comparar los cálculos de JavaScript con PHP,
+necesitas PHP y Node.js disponibles localmente:
 
 ```sh
-mkdir -p backups
-chmod 700 backups
-docker compose exec -T db sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" exec mysqldump --no-tablespaces --single-transaction --skip-lock-tables -u "$MYSQL_USER" "$MYSQL_DATABASE"' > backups/facturacion.backup.sql
-chmod 600 backups/facturacion.backup.sql
+php tests/logica.php
+node tests/calculos.mjs
 ```
 
-Compruebe el código de salida y conserve copias fuera del servidor. Para
-restaurar ese respaldo en los servicios ya inicializados, detenga primero la
-aplicación y luego importe el archivo. La restauración reemplaza las tablas
-incluidas en el respaldo:
-
-```sh
-docker compose stop app
-docker compose exec -T db sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" exec mysql -u "$MYSQL_USER" "$MYSQL_DATABASE"' < backups/facturacion.backup.sql
-docker compose start app
-```
-
-Para trasladar una instalación existente, respalde su base e impórtela mediante
-este procedimiento. Confirme que contiene las columnas y tablas de
-`database/actualizacion.sql` y `database/correo-configuracion.sql`; no aplique
-dos veces las mismas instrucciones `ALTER TABLE`.
-
-Las imágenes y su inicialización siguen las guías oficiales de
-[PHP en Docker](https://docs.docker.com/guides/php/) y
-[MySQL](https://hub.docker.com/_/mysql).
+Las pruebas de API y migración necesitan una base desechable llamada
+`facturacion_pruebas`. La preparación reinicia esa base; sigue la
+[guía de pruebas](tests/README.md) para configurarla y ejecutar la suite completa.
