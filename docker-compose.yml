@@ -1,0 +1,75 @@
+# Docker Compose para control de facturación (perfil dev).
+#
+#   docker compose up --build
+#
+# Interfaz y API en http://localhost:8080/ (APP_PORT) y MySQL 8 interno.
+# En el primer arranque, database/schema.sql se aplica automáticamente:
+# crea facturacion_db con su estructura completa y los datos de ejemplo.
+#
+# Para el entorno productivo con proxy TLS usar docker-compose.prod.yml:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# La configuración se lee de .env (FACTURACION_*, credenciales MySQL, SMTP).
+# La aplicación nunca ve la contraseña de root: se conecta con FACTURACION_DB_USER.
+
+x-app: &app
+  build:
+    context: .
+  image: bvm-facturacion-app:latest
+  env_file:
+    - .env
+  restart: unless-stopped
+
+services:
+  db:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: "${MYSQL_ROOT_PASSWORD:?Define MYSQL_ROOT_PASSWORD en .env}"
+      MYSQL_DATABASE: facturacion_db
+      MYSQL_USER: ${FACTURACION_DB_USER:-facturacion}
+      MYSQL_PASSWORD: "${FACTURACION_DB_PASS:?Define FACTURACION_DB_PASS en .env}"
+    volumes:
+      - mysql-data:/var/lib/mysql
+      # Instalación inicial: se ejecuta sólo con el volumen vacío.
+      # ATENCIÓN: schema.sql es destructivo (DROP TABLE); reinstalar exige borrar el volumen.
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+      - facturacion
+
+  app:
+    <<: *app
+    environment:
+      FACTURACION_DB_HOST: db
+      FACTURACION_DB_NAME: facturacion_db
+      FACTURACION_DB_USER: ${FACTURACION_DB_USER:-facturacion}
+      FACTURACION_DB_PASS: ${FACTURACION_DB_PASS:?Define FACTURACION_DB_PASS en .env}
+    ports:
+      - "${APP_PORT:-8080}:80"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "php -r 'exit(@file_get_contents(\"http://localhost/\") ? 0 : 1);'"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    networks:
+      - facturacion
+
+networks:
+  facturacion:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.32.32.0/24
+
+volumes:
+  mysql-data:
