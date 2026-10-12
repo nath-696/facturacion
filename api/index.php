@@ -53,6 +53,9 @@ $pdo = db();
 try {
     if ($action !== 'login') {
         $sesion = usuarioAutorizado($pdo);
+        // La autorización ya leyó la sesión; no bloquear otras consultas durante SQL o SMTP.
+        // Logout conserva la sesión abierta para poder destruirla.
+        if ($action !== 'logout') session_write_close();
         accionesPanel($action, $pdo, $sesion);
     }
     switch ($action) {
@@ -124,7 +127,7 @@ try {
             $code = textoCampo($data, 'codigo', 50, true);
             $description = textoCampo($data, 'descripcion', 160, true);
             $price = (float)($data['precio'] ?? 0);
-            if (!preg_match('/^PROD-\d{6}$/', $code) || $price <= 0 || $price > 99999999.99 ||
+            if (!preg_match('/^MIN-\d{4}$/', $code) || $price <= 0 || $price > 99999999.99 ||
                 !preg_match('/^\d+(\.\d{1,2})?$/', (string)($data['precio'] ?? ''))) {
                 responder(['success' => false, 'message' => 'Descripción, código y precio válido son obligatorios.'], 422);
             }
